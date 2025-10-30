@@ -1,8 +1,13 @@
 name: Publish site on release
 
+# триггер при публикации релиза
 on:
   release:
     types: [published]
+
+# дать права записи на содержимое (нужно для пуша)
+permissions:
+  contents: write
 
 jobs:
   publish:
@@ -13,6 +18,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+        persist-credentials: true
 
     - name: Set up git user
       run: |
@@ -28,9 +34,19 @@ jobs:
         cp -r ru outsite/ru || true
         cp -r en outsite/en || true
         cp index.html outsite/index.html || true
+        # normalize version dir: ensure it starts with single 'v'
+        # if tag is "v1.0" -> DIR=v1.0, if tag is "1.0" -> DIR=v1.0
+        if [[ "$TAG" == v* ]]; then
+          DIR="$TAG"
+        else
+          DIR="v$TAG"
+        fi
+        echo "Publishing into folder: $DIR"
+        echo "$DIR" > .publish_dir
 
     - name: Checkout gh-pages branch
       run: |
+        # Ensure gh-pages exists locally (if not - create orphan)
         if git show-ref --quiet refs/heads/gh-pages; then
           git checkout gh-pages
           git pull origin gh-pages || true
@@ -41,13 +57,12 @@ jobs:
         fi
 
     - name: Copy versioned site into gh-pages
-      env:
-        TAG: ${{ github.event.release.tag_name }}
       run: |
-        mkdir -p v$TAG
-        rsync -a --delete outsite/ v$TAG/
-        git add v$TAG
-        git commit -m "Publish site for version v$TAG [ci skip]" || echo "No changes to commit"
+        TAG_DIR=$(cat .publish_dir)
+        mkdir -p "$TAG_DIR"
+        rsync -a --delete outsite/ "$TAG_DIR/"
+        git add "$TAG_DIR"
+        git commit -m "Publish site for version $TAG_DIR [ci skip]" || echo "No changes to commit"
 
     - name: Push changes to gh-pages
       uses: ad-m/github-push-action@v0.6.0
