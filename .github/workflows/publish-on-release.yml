@@ -1,0 +1,56 @@
+name: Publish site on release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up git user
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+    - name: Prepare site folder for version
+      env:
+        TAG: ${{ github.event.release.tag_name }}
+      run: |
+        echo "Release tag: $TAG"
+        mkdir -p outsite
+        cp -r ru outsite/ru || true
+        cp -r en outsite/en || true
+        cp index.html outsite/index.html || true
+
+    - name: Checkout gh-pages branch
+      run: |
+        if git show-ref --quiet refs/heads/gh-pages; then
+          git checkout gh-pages
+          git pull origin gh-pages || true
+        else
+          git checkout --orphan gh-pages
+          git rm -rf .
+          git commit --allow-empty -m "Create gh-pages branch"
+        fi
+
+    - name: Copy versioned site into gh-pages
+      env:
+        TAG: ${{ github.event.release.tag_name }}
+      run: |
+        mkdir -p v$TAG
+        rsync -a --delete outsite/ v$TAG/
+        git add v$TAG
+        git commit -m "Publish site for version v$TAG [ci skip]" || echo "No changes to commit"
+
+    - name: Push changes to gh-pages
+      uses: ad-m/github-push-action@v0.6.0
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        branch: gh-pages
