@@ -1,71 +1,71 @@
-name: Publish site on release
+name: Deploy pages on release
 
-# триггер при публикации релиза
 on:
   release:
     types: [published]
 
-# дать права записи на содержимое (нужно для пуша)
 permissions:
   contents: write
 
 jobs:
-  publish:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        persist-credentials: true
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Set up git user
-      run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Set up git user
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-    - name: Prepare site folder for version
-      env:
-        TAG: ${{ github.event.release.tag_name }}
-      run: |
-        echo "Release tag: $TAG"
-        mkdir -p outsite
-        cp -r ru outsite/ru || true
-        cp -r en outsite/en || true
-        cp index.html outsite/index.html || true
-        # normalize version dir: ensure it starts with single 'v'
-        # if tag is "v1.0" -> DIR=v1.0, if tag is "1.0" -> DIR=v1.0
-        if [[ "$TAG" == v* ]]; then
-          DIR="$TAG"
-        else
-          DIR="v$TAG"
-        fi
-        echo "Publishing into folder: $DIR"
-        echo "$DIR" > .publish_dir
+      - name: Prepare and deploy
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          CLEAN_TAG="${TAG#v}"
+          DEPLOY_DIR="v${CLEAN_TAG}"
+          
+          if git ls-remote --exit-code origin gh-pages; then
+            git fetch origin gh-pages
+            git checkout gh-pages
+            git pull origin gh-pages
+          else
+            git checkout --orphan gh-pages
+            git reset --hard
+          fi
+          
+          mkdir -p "${DEPLOY_DIR}"
+          git checkout ${{ github.sha }} -- .
+          cp -r *.html "${DEPLOY_DIR}/" 2>/dev/null || true
+          cp -r ru en "${DEPLOY_DIR}/" 2>/dev/null || true
+          git checkout gh-pages -- index.html 2>/dev/null || true
+          
+          if ! grep -q "href=\"${DEPLOY_DIR}/" index.html; then
+            sed -i "/<!-- Добавляйте новые версии сюда -->/i \    <li><a href=\"${DEPLOY_DIR}/index.html\"><code>${DEPLOY_DIR}</code></a></li>" index.html
+          fi
+          
+          touch .nojekyll
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to deploy."
+          else
+            git commit -m "Deploy version ${DEPLOY_DIR}"
+            git push origin gh-pages
+          fi
 
-    - name: Checkout gh-pages branch
-      run: |
-        # Ensure gh-pages exists locally (if not - create orphan)
-        if git show-ref --quiet refs/heads/gh-pages; then
-          git checkout gh-pages
-          git pull origin gh-pages || true
-        else
-          git checkout --orphan gh-pages
-          git rm -rf .
-          git commit --allow-empty -m "Create gh-pages branch"
-        fi
+          echo "DEPLOY_DIR=${DEPLOY_DIR}" >> $GITHUB_ENV
 
-    - name: Copy versioned site into gh-pages
-      run: |
-        TAG_DIR=$(cat .publish_dir)
-        mkdir -p "$TAG_DIR"
-        rsync -a --delete outsite/ "$TAG_DIR/"
-        git add "$TAG_DIR"
-        git commit -m "Publish site for version $TAG_DIR [ci skip]" || echo "No changes to commit"
-
-    - name: Push changes to gh-pages
-      uses: ad-m/github-push-action@v0.6.0
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        branch: gh-pages
+      - name: Show deployed URLs
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          OWNER=$(echo "${REPO}" | cut -d'/' -f1)
+          REPO_NAME=$(echo "${REPO}" | cut -d'/' -f2)
+          echo "Main page: https://${OWNER}.github.io/${REPO_NAME}/"
+          echo "New version: https://${OWNER}.github.io/${REPO_NAME}/${{ env.DEPLOY_DIR }}/"
+          echo "Russian version: https://${OWNER}.github.io/${REPO_NAME}/${{ env.DEPLOY_DIR }}/ru/"
+          echo "English version: https://${OWNER}.github.io/${REPO_NAME}/${{ env.DEPLOY_DIR }}/en/"
